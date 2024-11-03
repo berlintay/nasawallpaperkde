@@ -1,0 +1,26 @@
+<!--     Resource Collection File (RCC)
+    This file is used to specify resources that should be included in the application.
+    
+    <RCC>: The root element of the Resource Collection File.
+    
+    <qresource>: Defines a resource group.
+        @prefix: Specifies the prefix path for the resources in this group.
+                 "/" indicates the root of the resource system.
+    
+    <file>: Specifies a file to be included in the resource collection.
+            The path is relative to the location of this .qrc file.
+    
+    Note: This RCC file includes the main.qml file, which is typically
+    the entry point for a QML-based application.
+-->
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+    </qresource>
+</RCC>import QtQuick 2.0
+Item {
+    // Load the main.qml file from the embedded resources
+    Loader {
+        source: "qrc:/main.qml"
+    }
+}
