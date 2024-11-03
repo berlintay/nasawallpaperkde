@@ -1,114 +1,91 @@
 import requests
 import os
 import subprocess
-from typing import Optional
-import logging
+import shutil
 import time
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # NASA API Endpoints
 NASA_SEARCH_ENDPOINT = "https://images-api.nasa.gov/search"
 NASA_ASSET_ENDPOINT = "https://images-api.nasa.gov/asset"
 
-# NASA API Key
-API_KEY = "CdfwBW7mA3XofhaevIXum5nVx5aKojkRe534pII1"
-
 # Path to save the image
-SAVE_PATH = os.path.expanduser("~/Pictures/nasa_wallpaper.jpg")
+SAVE_PATH = "/tmp/nasa_wallpaper.jpg"
 
-def search_nasa_images(query: str, max_retries: int = 3) -> Optional[str]:
-    """
-    Search NASA images using the NASA API with retry mechanism and error handling.
+# Step 1: Search for an image from NASA
 
-    This function performs a search query on the NASA image database, attempting
-    to find images matching the given query. It includes a retry mechanism to
-    handle potential network issues or temporary API failures.
-
-    Parameters:
-    query (str): The search term to query NASA's image database.
-    max_retries (int, optional): The maximum number of retry attempts for the API call.
-                                 Defaults to 3.
-
-    Returns:
-    Optional[str]: The NASA ID of the first image found if successful, None otherwise.
-                   This ID can be used to fetch more details about the image.
-
-    Raises:
-    No exceptions are raised; all errors are logged and None is returned on failure.
-    """
+def search_nasa_images(query, retries=3):
     params = {
         'q': query,
-        'media_type': 'image',
-        'api_key': API_KEY
+        'media_type': 'image'
     }
-
-    for attempt in range(max_retries):
+    attempt = 0
+    while attempt < retries:
         try:
-            response = requests.get(NASA_SEARCH_ENDPOINT, params=params, timeout=10)
-            response.raise_for_status()
-
-            data = response.json()
-            items = data.get('collection', {}).get('items', [])
-
-            if items:
-                return items[0]['data'][0]['nasa_id']
-            logger.warning("No items found for the query.")
-            return None
-
+            response = requests.get(NASA_SEARCH_ENDPOINT, params=params)
+            print(f"Request URL: {response.url}")  # Debug: Print the request URL
+            if response.status_code == 200:
+                data = response.json()
+                items = data['collection']['items']
+                if items:
+                    return items[0]['data'][0]['nasa_id']
+                else:
+                    print("No items found for the query.")
+                    return None
+            else:
+                print(f"Failed to search. Status code: {response.status_code}")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-            continue
-
+            print(f"Request failed (attempt {attempt + 1}/{retries}): {e}")
+        attempt += 1
+        time.sleep(1)  # Wait a bit before retrying
     return None
 
-def get_asset_url(nasa_id: str) -> Optional[str]:
-    """Get asset URL with error handling."""
-    try:
-        response = requests.get(f"{NASA_ASSET_ENDPOINT}/{nasa_id}", timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        items = data.get('collection', {}).get('items', [])
-        
-        if items:
-            return items[-1]['href']
-        logger.warning("No asset found.")
-        return None
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to retrieve asset: {e}")
-        return None
+# Step 2: Get the asset URL using the NASA ID
 
-def download_image(image_url: str, save_path: str) -> bool:
-    """Download image with proper error handling and directory creation."""
-    try:
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
-        response = requests.get(image_url, timeout=10)
-        response.raise_for_status()
-        
-        with open(save_path, 'wb') as file:
-            file.write(response.content)
-        logger.info(f"Image successfully downloaded to {save_path}")
-        return True
-        
-    except (requests.exceptions.RequestException, IOError) as e:
-        logger.error(f"Failed to download image: {e}")
-        return False
+def get_asset_url(nasa_id, retries=3):
+    attempt = 0
+    while attempt < retries:
+        try:
+            response = requests.get(f"{NASA_ASSET_ENDPOINT}/{nasa_id}")
+            print(f"Request URL: {response.url}")  # Debug: Print the request URL
+            if response.status_code == 200:
+                data = response.json()
+                items = data['collection']['items']
+                if items:
+                    return items[-1]['href']  # Typically the last item is the full resolution image
+                else:
+                    print("No asset found.")
+                    return None
+            else:
+                print(f"Failed to retrieve asset. Status code: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed (attempt {attempt + 1}/{retries}): {e}")
+        attempt += 1
+        time.sleep(1)  # Wait a bit before retrying
+    return None
 
-def set_wallpaper(image_path: str) -> bool:
-    """Set KDE wallpaper with error handling."""
-    if not os.path.exists(image_path):
-        logger.error(f"Image file not found: {image_path}")
-        return False
+# Step 3: Download the image
 
-    try:
+def download_image(image_url, save_path, retries=3):
+    attempt = 0
+    while attempt < retries:
+        try:
+            response = requests.get(image_url)
+            if response.status_code == 200:
+                with open(save_path, 'wb') as file:
+                    file.write(response.content)
+                    print(f"Image successfully downloaded to {save_path}")
+                return
+            else:
+                print(f"Failed to download image. Status code: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"Download failed (attempt {attempt + 1}/{retries}): {e}")
+        attempt += 1
+        time.sleep(1)  # Wait a bit before retrying
+
+# Step 4: Set the KDE wallpaper using qdbus or dbus-send
+
+def set_wallpaper(image_path):
+    if shutil.which("qdbus"):
         command = [
             "qdbus", "org.kde.plasmashell", "/PlasmaShell",
             "org.kde.PlasmaShell.evaluateScript",
@@ -122,37 +99,25 @@ def set_wallpaper(image_path: str) -> bool:
             }}
             '''
         ]
-        
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        logger.info("Wallpaper set successfully")
-        return True
-        
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to set wallpaper: {e}")
-        logger.error(f"Command output: {e.output}")
-        return False
-
-def main():
-    """Main function with proper error handling."""
-    query = "Mars"
-    
-    nasa_id = search_nasa_images(query)
-    if not nasa_id:
-        logger.error("Failed to find NASA image")
-        return
-    
-    image_url = get_asset_url(nasa_id)
-    if not image_url:
-        logger.error("Failed to get image URL")
-        return
-    
-    if not download_image(image_url, SAVE_PATH):
-        logger.error("Failed to download image")
-        return
-    
-    if not set_wallpaper(SAVE_PATH):
-        logger.error("Failed to set wallpaper")
+    elif shutil.which("dbus-send"):
+        command = [
+            "dbus-send", "--session", "--dest=org.kde.plasmashell",
+            "--type=method_call", "/PlasmaShell",
+            "org.kde.PlasmaShell.evaluateScript",
+            f'string:"var Desktops = desktops(); for (i=0;i<Desktops.length;i++) {{ d = Desktops[i]; d.wallpaperPlugin = \"org.kde.image\"; d.currentConfigGroup = Array(\"Wallpaper\", \"org.kde.image\", \"General\"); d.writeConfig(\"Image\", \"file://{image_path}\"); }}"'
+        ]
+    else:
+        print("Neither qdbus nor dbus-send is available on this system.")
         return
 
+    subprocess.run(command)
+
+# Main script execution
 if __name__ == "__main__":
-    main()
+    query = "Mars"  # You can change this to any keyword you want
+    nasa_id = search_nasa_images(query)
+    if nasa_id:
+        image_url = get_asset_url(nasa_id)
+        if image_url:
+            download_image(image_url, SAVE_PATH)
+            set_wallpaper(SAVE_PATH)
